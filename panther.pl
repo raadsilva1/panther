@@ -1469,9 +1469,15 @@ sub build_ui {
 
     my $controls_frame = Gtk3::Frame->new('Apply and save');
     $right->pack_start($controls_frame, FALSE, FALSE, 0);
+    my $controls_scroller = Gtk3::ScrolledWindow->new;
+    $controls_scroller->set_policy('automatic', 'automatic');
+    $controls_scroller->set_shadow_type('none');
+    $controls_scroller->set_size_request(-1, 190);
+    $controls_frame->add($controls_scroller);
+
     my $controls = Gtk3::Box->new('vertical', 8);
     $controls->set_border_width(8);
-    $controls_frame->add($controls);
+    $controls_scroller->add_with_viewport($controls);
 
     my $mode_combo = Gtk3::ComboBoxText->new;
     $mode_combo->append_text($_) for map { $MODE_META{$_}{title} } qw(fill max center scale tile);

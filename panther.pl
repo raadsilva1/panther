@@ -652,9 +652,41 @@ sub current_selection_cfg {
     return \%cfg;
 }
 
-sub set_preview_from_path {
-    my ($path, $title) = @_;
-    my $pix = load_scaled_pixbuf($path, 860, 480);
+sub preview_target_size {
+    my ($w, $h) = (860, 480);
+
+    if ($UI{preview_scroller}) {
+        eval {
+            my $aw = $UI{preview_scroller}->get_allocated_width;
+            my $ah = $UI{preview_scroller}->get_allocated_height;
+            $w = $aw - 24 if $aw && $aw > 80;
+            $h = $ah - 24 if $ah && $ah > 80;
+            1;
+        };
+    }
+
+    if ((!$w || $w < 80 || !$h || $h < 80) && $UI{window}) {
+        eval {
+            my ($ww, $wh) = $UI{window}->get_size;
+            $w = int($ww * 0.42) if $ww && $ww > 300;
+            $h = int($wh * 0.36) if $wh && $wh > 250;
+            1;
+        };
+    }
+
+    $w = 320 if !$w || $w < 320;
+    $h = 220 if !$h || $h < 220;
+    $w = 1800 if $w > 1800;
+    $h = 1200 if $h > 1200;
+    return ($w, $h);
+}
+
+sub render_preview {
+    my $path  = $RUNTIME{preview_source_path}  || '';
+    my $title = $RUNTIME{preview_source_title} || 'Preview';
+    my ($w, $h) = preview_target_size();
+
+    my $pix = load_scaled_pixbuf($path, $w, $h);
     if (!$pix) {
         $pix = fallback_icon_pixbuf(128);
     }
@@ -663,7 +695,15 @@ sub set_preview_from_path {
     } else {
         $UI{preview_image}->clear;
     }
-    $UI{preview_label}->set_text($title || 'Preview');
+    $UI{preview_label}->set_text($title);
+    $RUNTIME{last_preview_size} = "$w x $h";
+}
+
+sub set_preview_from_path {
+    my ($path, $title) = @_;
+    $RUNTIME{preview_source_path}  = $path  || '';
+    $RUNTIME{preview_source_title} = $title || 'Preview';
+    render_preview();
 }
 
 sub refresh_style_preview {
@@ -1354,12 +1394,21 @@ sub build_ui {
     $preview_box->set_border_width(8);
     $preview_frame->add($preview_box);
 
+    my $preview_scroller = Gtk3::ScrolledWindow->new;
+    $preview_scroller->set_policy('automatic', 'automatic');
+    $preview_scroller->set_size_request(320, 220);
+    $preview_box->pack_start($preview_scroller, TRUE, TRUE, 0);
+
     my $preview_image = Gtk3::Image->new;
+    my $preview_align = Gtk3::Alignment->new(0.5, 0.5, 0, 0);
+    $preview_align->add($preview_image);
+    $preview_scroller->add_with_viewport($preview_align);
+
     my $preview_label = Gtk3::Label->new('Preview');
     $preview_label->set_xalign(0);
+    $UI{preview_scroller} = $preview_scroller;
     $UI{preview_image} = $preview_image;
     $UI{preview_label} = $preview_label;
-    $preview_box->pack_start($preview_image, TRUE, TRUE, 0);
     $preview_box->pack_start($preview_label, FALSE, FALSE, 0);
 
     my $summary_frame = Gtk3::Frame->new('Current background');
@@ -1491,6 +1540,15 @@ sub build_ui {
                 set_preview_from_path($RUNTIME{selected_image}, friendly_name($RUNTIME{selected_image}));
             }
         }
+    });
+
+    $UI{preview_scroller}->signal_connect(size_allocate => sub {
+        my ($widget, $alloc) = @_;
+        my $size_key = ($alloc->{width} || 0) . 'x' . ($alloc->{height} || 0);
+        return if !$RUNTIME{preview_source_path} && !$RUNTIME{preview_source_title};
+        return if defined $RUNTIME{last_preview_alloc} && $RUNTIME{last_preview_alloc} eq $size_key;
+        $RUNTIME{last_preview_alloc} = $size_key;
+        render_preview();
     });
 
     $window->show_all;

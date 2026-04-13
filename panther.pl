@@ -1304,6 +1304,7 @@ sub build_ui {
     my $right = Gtk3::Box->new('vertical', 10);
     $paned->pack1($left, TRUE, FALSE);
     $paned->pack2($right, TRUE, FALSE);
+    $paned->set_position(610);
 
     my $notebook = Gtk3::Notebook->new;
     $UI{source_notebook} = $notebook;
@@ -1411,8 +1412,18 @@ sub build_ui {
     $UI{preview_label} = $preview_label;
     $preview_box->pack_start($preview_label, FALSE, FALSE, 0);
 
+    my $details_scroller = Gtk3::ScrolledWindow->new;
+    $details_scroller->set_policy('automatic', 'automatic');
+    $details_scroller->set_shadow_type('etched-in');
+    $details_scroller->set_size_request(-1, 180);
+    $right->pack_start($details_scroller, TRUE, TRUE, 0);
+
+    my $details_box = Gtk3::Box->new('vertical', 10);
+    $details_box->set_border_width(2);
+    $details_scroller->add_with_viewport($details_box);
+
     my $summary_frame = Gtk3::Frame->new('Current background');
-    $right->pack_start($summary_frame, FALSE, FALSE, 0);
+    $details_box->pack_start($summary_frame, FALSE, FALSE, 0);
     my $summary_grid = Gtk3::Grid->new;
     $summary_grid->set_column_spacing(12);
     $summary_grid->set_row_spacing(6);
@@ -1443,9 +1454,10 @@ sub build_ui {
     }
 
     my $health_frame = Gtk3::Frame->new('Folders and suggestions');
-    $right->pack_start($health_frame, TRUE, TRUE, 0);
+    $details_box->pack_start($health_frame, TRUE, TRUE, 0);
     my $health_scroll = Gtk3::ScrolledWindow->new;
     $health_scroll->set_policy('automatic', 'automatic');
+    $health_scroll->set_size_request(-1, 180);
     $health_frame->add($health_scroll);
     my $folder_buffer = Gtk3::TextBuffer->new;
     my $folder_view = Gtk3::TextView->new_with_buffer($folder_buffer);
@@ -1484,7 +1496,10 @@ sub build_ui {
     $UI{mode_help} = $mode_help;
     $controls->pack_start($mode_help, FALSE, FALSE, 0);
 
-    my $buttons_row = Gtk3::Box->new('horizontal', 6);
+    my $buttons_grid = Gtk3::Grid->new;
+    $buttons_grid->set_column_spacing(6);
+    $buttons_grid->set_row_spacing(6);
+    $buttons_grid->set_column_homogeneous(TRUE);
     my $check_folders = Gtk3::Button->new_with_label('Check folders');
     my $suggest_folders = Gtk3::Button->new_with_label('Suggest folders');
     my $restore_current = Gtk3::Button->new_with_label('Restore current');
@@ -1494,10 +1509,21 @@ sub build_ui {
     my $save_shared = Gtk3::Button->new_with_label('Save as shared default');
     $save_shared->set_sensitive($> == 0 ? TRUE : FALSE);
 
-    for my $btn ($check_folders, $suggest_folders, $restore_current, $use_shared, $apply_now, $save_and_apply, $save_shared) {
-        $buttons_row->pack_start($btn, FALSE, FALSE, 0);
+    my @action_buttons = (
+        $check_folders,
+        $suggest_folders,
+        $restore_current,
+        $use_shared,
+        $apply_now,
+        $save_and_apply,
+        $save_shared,
+    );
+    for my $i (0 .. $#action_buttons) {
+        my $col = $i % 3;
+        my $row = int($i / 3);
+        $buttons_grid->attach($action_buttons[$i], $col, $row, 1, 1);
     }
-    $controls->pack_start($buttons_row, FALSE, FALSE, 0);
+    $controls->pack_start($buttons_grid, FALSE, FALSE, 0);
 
     my $status_label = Gtk3::Label->new('Ready.');
     $status_label->set_xalign(0);

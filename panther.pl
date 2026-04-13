@@ -420,6 +420,25 @@ sub status_text {
     $UI{status_label}->set_text(($prefix{$level} || 'Panther') . ': ' . ($text || '')) if $UI{status_label};
 }
 
+sub show_friendly_alert {
+    my ($title, $text) = @_;
+    $title ||= 'Panther';
+    $text  ||= 'Something needs your attention.';
+    return if !$UI{window};
+
+    my $dialog = Gtk3::MessageDialog->new(
+        $UI{window},
+        'destroy-with-parent',
+        'warning',
+        'ok',
+        $title,
+    );
+    $dialog->format_secondary_text($text);
+    eval { $dialog->set_title($APP_NAME); 1; };
+    eval { $dialog->run; 1; };
+    $dialog->destroy;
+}
+
 sub report_folder_health {
     my ($scan) = @_;
     my @lines;
@@ -668,8 +687,8 @@ sub preview_target_size {
     if ((!$w || $w < 80 || !$h || $h < 80) && $UI{window}) {
         eval {
             my ($ww, $wh) = $UI{window}->get_size;
-            $w = int($ww * 0.42) if $ww && $ww > 300;
-            $h = int($wh * 0.36) if $wh && $wh > 250;
+            $w = int($ww * 0.40) if $ww && $ww > 300;
+            $h = int($wh * 0.34) if $wh && $wh > 250;
             1;
         };
     }
@@ -686,17 +705,57 @@ sub render_preview {
     my $title = $RUNTIME{preview_source_title} || 'Preview';
     my ($w, $h) = preview_target_size();
 
-    my $pix = load_scaled_pixbuf($path, $w, $h);
+    my $pix;
+    $pix = load_scaled_pixbuf($path, $w, $h) if $path && -r $path;
+
+    if (!$pix && $path && -r $path) {
+        eval {
+            my $full = Gtk3::Gdk::Pixbuf->new_from_file($path);
+            if ($full) {
+                my $ow = $full->get_width  || $w;
+                my $oh = $full->get_height || $h;
+                if ($ow > 0 && $oh > 0) {
+                    my $ratio = $ow / $oh;
+                    my $tw = $w;
+                    my $th = $h;
+                    if (($w / $h) > $ratio) {
+                        $tw = int($h * $ratio);
+                        $th = $h;
+                    } else {
+                        $tw = $w;
+                        $th = int($w / $ratio);
+                    }
+                    $tw = 32 if $tw < 32;
+                    $th = 32 if $th < 32;
+                    $pix = $full->scale_simple($tw, $th, 'bilinear');
+                }
+            }
+            1;
+        };
+    }
+
     if (!$pix) {
         $pix = fallback_icon_pixbuf(128);
+        if ($path && (($RUNTIME{preview_alert_shown_for} || '') ne $path)) {
+            $RUNTIME{preview_alert_shown_for} = $path;
+            Glib::Idle->add(sub {
+                show_friendly_alert(
+                    'Preview not available',
+                    'Panther could not show this picture in the preview area right now. You can still choose another picture, or try refreshing the folders.',
+                );
+                return FALSE;
+            });
+        }
+    } else {
+        delete $RUNTIME{preview_alert_shown_for};
     }
+
     if ($pix) {
         $UI{preview_image}->set_from_pixbuf($pix);
     } else {
         $UI{preview_image}->clear;
     }
     $UI{preview_label}->set_text($title);
-    $RUNTIME{last_preview_size} = "$w x $h";
 }
 
 sub set_preview_from_path {
@@ -1304,7 +1363,6 @@ sub build_ui {
     my $right = Gtk3::Box->new('vertical', 10);
     $paned->pack1($left, TRUE, FALSE);
     $paned->pack2($right, TRUE, FALSE);
-    $paned->set_position(610);
 
     my $notebook = Gtk3::Notebook->new;
     $UI{source_notebook} = $notebook;
@@ -1401,9 +1459,7 @@ sub build_ui {
     $preview_box->pack_start($preview_scroller, TRUE, TRUE, 0);
 
     my $preview_image = Gtk3::Image->new;
-    my $preview_align = Gtk3::Alignment->new(0.5, 0.5, 0, 0);
-    $preview_align->add($preview_image);
-    $preview_scroller->add_with_viewport($preview_align);
+    $preview_scroller->add_with_viewport($preview_image);
 
     my $preview_label = Gtk3::Label->new('Preview');
     $preview_label->set_xalign(0);
@@ -1413,13 +1469,11 @@ sub build_ui {
     $preview_box->pack_start($preview_label, FALSE, FALSE, 0);
 
     my $details_scroller = Gtk3::ScrolledWindow->new;
-    $details_scroller->set_policy('automatic', 'automatic');
-    $details_scroller->set_shadow_type('etched-in');
-    $details_scroller->set_size_request(-1, 180);
+    $details_scroller->set_policy('never', 'automatic');
+    $details_scroller->set_size_request(-1, 210);
     $right->pack_start($details_scroller, TRUE, TRUE, 0);
 
     my $details_box = Gtk3::Box->new('vertical', 10);
-    $details_box->set_border_width(2);
     $details_scroller->add_with_viewport($details_box);
 
     my $summary_frame = Gtk3::Frame->new('Current background');
@@ -1457,7 +1511,7 @@ sub build_ui {
     $details_box->pack_start($health_frame, TRUE, TRUE, 0);
     my $health_scroll = Gtk3::ScrolledWindow->new;
     $health_scroll->set_policy('automatic', 'automatic');
-    $health_scroll->set_size_request(-1, 180);
+    $health_scroll->set_size_request(-1, 160);
     $health_frame->add($health_scroll);
     my $folder_buffer = Gtk3::TextBuffer->new;
     my $folder_view = Gtk3::TextView->new_with_buffer($folder_buffer);
@@ -1470,9 +1524,8 @@ sub build_ui {
     my $controls_frame = Gtk3::Frame->new('Apply and save');
     $right->pack_start($controls_frame, FALSE, FALSE, 0);
     my $controls_scroller = Gtk3::ScrolledWindow->new;
-    $controls_scroller->set_policy('automatic', 'automatic');
-    $controls_scroller->set_shadow_type('none');
-    $controls_scroller->set_size_request(-1, 190);
+    $controls_scroller->set_policy('never', 'automatic');
+    $controls_scroller->set_size_request(-1, 180);
     $controls_frame->add($controls_scroller);
 
     my $controls = Gtk3::Box->new('vertical', 8);
@@ -1505,7 +1558,6 @@ sub build_ui {
     my $buttons_grid = Gtk3::Grid->new;
     $buttons_grid->set_column_spacing(6);
     $buttons_grid->set_row_spacing(6);
-    $buttons_grid->set_column_homogeneous(TRUE);
     my $check_folders = Gtk3::Button->new_with_label('Check folders');
     my $suggest_folders = Gtk3::Button->new_with_label('Suggest folders');
     my $restore_current = Gtk3::Button->new_with_label('Restore current');
@@ -1515,19 +1567,19 @@ sub build_ui {
     my $save_shared = Gtk3::Button->new_with_label('Save as shared default');
     $save_shared->set_sensitive($> == 0 ? TRUE : FALSE);
 
-    my @action_buttons = (
-        $check_folders,
-        $suggest_folders,
-        $restore_current,
-        $use_shared,
-        $apply_now,
-        $save_and_apply,
-        $save_shared,
+    my @button_specs = (
+        [$check_folders,   0, 0],
+        [$suggest_folders, 1, 0],
+        [$restore_current, 0, 1],
+        [$use_shared,      1, 1],
+        [$apply_now,       0, 2],
+        [$save_and_apply,  1, 2],
+        [$save_shared,     0, 3, 2, 1],
     );
-    for my $i (0 .. $#action_buttons) {
-        my $col = $i % 3;
-        my $row = int($i / 3);
-        $buttons_grid->attach($action_buttons[$i], $col, $row, 1, 1);
+    for my $spec (@button_specs) {
+        my ($btn, $col, $row, $wspan, $hspan) = @{$spec};
+        $btn->set_hexpand(TRUE);
+        $buttons_grid->attach($btn, $col, $row, ($wspan || 1), ($hspan || 1));
     }
     $controls->pack_start($buttons_grid, FALSE, FALSE, 0);
 
@@ -1557,6 +1609,9 @@ sub build_ui {
     $apply_now->signal_connect(clicked => sub { apply_cfg(current_selection_cfg(), 0); });
     $save_and_apply->signal_connect(clicked => sub { apply_cfg(current_selection_cfg(), 1); });
     $save_shared->signal_connect(clicked => \&save_as_shared_default);
+    $preview_scroller->signal_connect(size_allocate => sub {
+        render_preview() if $RUNTIME{preview_source_path};
+    });
     $notebook->signal_connect(switch_page => sub {
         my ($nb, $page, $num) = @_;
         if ($num == 1) {
@@ -1572,15 +1627,6 @@ sub build_ui {
                 set_preview_from_path($RUNTIME{selected_image}, friendly_name($RUNTIME{selected_image}));
             }
         }
-    });
-
-    $UI{preview_scroller}->signal_connect(size_allocate => sub {
-        my ($widget, $alloc) = @_;
-        my $size_key = ($alloc->{width} || 0) . 'x' . ($alloc->{height} || 0);
-        return if !$RUNTIME{preview_source_path} && !$RUNTIME{preview_source_title};
-        return if defined $RUNTIME{last_preview_alloc} && $RUNTIME{last_preview_alloc} eq $size_key;
-        $RUNTIME{last_preview_alloc} = $size_key;
-        render_preview();
     });
 
     $window->show_all;
